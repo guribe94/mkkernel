@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# quit if any command fails
+set -e
+
+
+# does .config exist?
+if [ ! -f .config ] ; then
+    echo "ERR: no .config: configure your kernel before you proceed"
+    exit 1
+fi
+
+
+if [ -z "$2" ] ; then
+	LOCAL_VERSION=$(grep '^CONFIG_LOCALVERSION\=' .config | sed 's/.*"\(.*\)".*/\1/g')
+else
+    LOCAL_VERSION=$2
+fi
+
+if [ -z "$1" ] ; then
+    K_1=$(grep '^VERSION = '     Makefile | awk '{print $3}')
+    K_2=$(grep '^PATCHLEVEL = '  Makefile | awk '{print $3}')
+    K_3=$(grep '^SUBLEVEL = '    Makefile | awk '{print $3}')
+    K_4=$(grep '^EXTRAVERSION = '    Makefile | awk '{print $3}')
+    KERNEL_NAME=${K_1}.${K_2}.${K_3}${K_4}$LOCAL_VERSION
+else
+    KERNEL_NAME=$1$LOCAL_VERSION
+fi
+
+read -p "Press [Enter] to build kernel ${KERNEL_NAME} ..."
+
+# compile kernel; install modules
+echo "Running make -j$(nproc) ..."
+make -j$(nproc)
+sudo make modules_install
+
+# copy the kernel to /boot; generate initrd; copy System.map
+sudo cp -v arch/x86/boot/bzImage /boot/vmlinuz-$KERNEL_NAME
+sudo mkinitcpio -k $KERNEL_NAME -c /etc/mkinitcpio.conf -g /boot/initramfs-${KERNEL_NAME}.img
+sudo cp System.map /boot/System.map-$KERNEL_NAME
+sudo ln -fs /boot/System.map-$KERNEL_NAME /boot/System.map
+
+# add boot menu 
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+
+# recompile vbox guest module
+#   - remove may fail if module is not already installed
+#VBOX_VERSION=$(pacman -Q virtualbox-guest-dkms | awk '{print $2}' | sed 's/\-.*//')
+#set +e
+#sudo dkms remove  -m vboxguest -v ${VBOX_VERSION}_OSE -k $KERNEL_NAME
+#set -e
+#sudo dkms install -m vboxguest -v ${VBOX_VERSION}_OSE -k $KERNEL_NAME
+
+# done
+echo "vmlinuz-$KERNEL_NAME installed; run \"sudo reboot\" to reboot."
